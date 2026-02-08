@@ -13,7 +13,7 @@ dependencies = [
     "langchain-experimental>=0.3.4",
     "python-dotenv>=1.0.1",
     "rich>=13.7.0",
-    "pydantic-settings>=2.0.0",
+    "pydantic-settings>=2.0.2",
 ]
 
 [project.scripts]

@@ -1792,7 +1792,7 @@ requires-dist = [
     { name = "langchain-text-splitters", specifier = ">=0.3.4" },
     { name = "langgraph", specifier = ">=0.2.60" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=2.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.2" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "rich", specifier = ">=13.7.0" },
 ]
