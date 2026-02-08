@@ -19,6 +19,99 @@ def _get_truncator() -> Truncator:
     )
 
 
+def _build_objectives(has_schema: bool) -> str:
+    """Build the PrimaryObjectives block based on schema availability."""
+    if has_schema:
+        return """    <PrimaryObjectives>
+        1. Extract meaningful data from the TextChunk into the JSON Document.
+        2. Follow the TargetSchema structure strictly.
+        3. Create SEPARATE sections for each distinct topic in the document.
+        4. Preserve all data from previous chunks — only ADD new data, never overwrite existing arrays.
+        5. Call `update_guidance` at the end to finalize.
+    </PrimaryObjectives>"""
+    return """    <PrimaryObjectives>
+        1. Extract meaningful data from the TextChunk into the JSON Document.
+        2. **No schema was provided.** Infer the most natural and logical JSON structure from the content itself. Choose key names, nesting, and types that best represent the data. Do NOT follow a fixed template — adapt the structure to what the text actually contains.
+        3. Use concise, descriptive key names (e.g., "name", "age", "company", "items") that match the content's domain.
+        4. Preserve all data from previous chunks — only ADD new data, never overwrite existing arrays.
+        5. Call `update_guidance` at the end to finalize.
+    </PrimaryObjectives>"""
+
+
+def _build_patch_rules(has_schema: bool) -> str:
+    """Build the JsonPatchRules block based on schema availability."""
+    if has_schema:
+        return """    <JsonPatchRules>
+        **How to ADD data to the document:**
+
+        Creating initial structure (when document is empty — use keys from the TargetSchema):
+          {{"op":"add", "path":"/<top_level_key>", "value":{{...}} }}
+          {{"op":"add", "path":"/<array_key>", "value":[] }}
+
+        Appending to an array (use "/-" to append):
+          {{"op":"add", "path":"/<array_key>/-", "value":{{...}} }}
+
+        ⚠ NEVER do this (replaces the entire array, destroying previous data):
+          {{"op":"add", "path":"/<array_key>", "value":{{...}} }}     ← WRONG: replaces array with object
+          {{"op":"add", "path":"/<array_key>", "value":[{{...}}] }}   ← WRONG: replaces array with new array
+
+        **Key rule: "/-" means APPEND. Always use it when adding to existing arrays.**
+
+        Correcting a single value:
+          {{"op":"replace", "path":"/<key>/0/<field>", "value":"corrected value"}}
+
+        Removing a wrong entry:
+          {{"op":"remove", "path":"/<key>/0"}}
+    </JsonPatchRules>"""
+    return """    <JsonPatchRules>
+        **How to ADD data to the document:**
+
+        You must design the JSON structure yourself based on the text content.
+        Use key names that naturally describe the data (e.g., "employees", "products", "address", "summary").
+
+        Creating initial structure (when document is empty — choose keys that fit the content):
+          {{"op":"add", "path":"/<your_key>", "value":"some string"}}
+          {{"op":"add", "path":"/<your_list>", "value":[]}}
+          {{"op":"add", "path":"/<your_object>", "value":{{}}}}
+
+        Appending to an array (use "/-" to append):
+          {{"op":"add", "path":"/<your_list>/-", "value":{{...}} }}
+
+        ⚠ NEVER do this (replaces the entire array, destroying previous data):
+          {{"op":"add", "path":"/<your_list>", "value":{{...}} }}     ← WRONG: replaces array with object
+          {{"op":"add", "path":"/<your_list>", "value":[{{...}}] }}   ← WRONG: replaces array with new array
+
+        **Key rule: "/-" means APPEND. Always use it when adding to existing arrays.**
+
+        Correcting a single value:
+          {{"op":"replace", "path":"/<key>/<index>/<field>", "value":"corrected value"}}
+
+        Removing a wrong entry:
+          {{"op":"remove", "path":"/<key>/0"}}
+    </JsonPatchRules>"""
+
+
+def _build_constraints(has_schema: bool) -> str:
+    """Build the OperationalConstraints block based on schema availability."""
+    schema_hint = (
+        '- **Schema inspection:** If the TargetSchema above appears truncated or '
+        "incomplete, use `inspect_keys`, `read_value`, or `search_pointer` with "
+        '`source="schema"` to explore the full schema structure. This lets you '
+        "discover required properties, nested object definitions, and allowed "
+        "types that may not be visible in the truncated prompt."
+        if has_schema
+        else ""
+    )
+    return f"""    <OperationalConstraints>
+        - **Recon before write:** Use `inspect_keys` to check array lengths and structure before patching. One recon iteration is usually enough.
+        - **Batch writes:** Put all patch operations for this chunk in a single `apply_patches` call when possible.
+        - **Finalization gate:** `update_guidance` MUST be the ONLY tool call in its response. Do not combine it with other tools.
+        - **Error recovery:** If `apply_patches` fails, read the error message — it tells you exactly how to fix the issue. Then retry.
+        - **No over-reading:** Don't read every field. Use `inspect_keys` for lengths, `read_value` only for specific items you need to verify.
+        {schema_hint}
+    </OperationalConstraints>"""
+
+
 def build_system_prompt(
     target_schema: Optional[dict[str, Any]] = None,
     previous_guidance: Optional[dict[str, Any]] = None,
@@ -39,6 +132,7 @@ def build_system_prompt(
     truncator = _get_truncator()
 
     schema_str = json.dumps(target_schema, indent=2) if target_schema else "null"
+    has_schema = target_schema is not None
     guidance_str = (
         truncator.truncate_with_limit(previous_guidance, s.TRUNCATE_GUIDANCE_LIMIT)
         if previous_guidance
@@ -49,6 +143,10 @@ def build_system_prompt(
         if json_skeleton
         else "{}"
     )
+
+    objectives_block = _build_objectives(has_schema)
+    patch_rules_block = _build_patch_rules(has_schema)
+    constraints_block = _build_constraints(has_schema)
 
     return f"""<SystemPrompt>
     <RoleDefinition>
@@ -63,49 +161,11 @@ def build_system_prompt(
         Be decisive. After a quick recon, write your patches confidently. Don't over-inspect.
     </RoleDefinition>
 
-    <PrimaryObjectives>
-        1. Extract meaningful data from the TextChunk into the JSON Document.
-        2. Follow the TargetSchema structure.
-        3. Create SEPARATE sections for each distinct topic in the document (e.g., "Overview", "Financial Data", "Performance").
-        4. Preserve all data from previous chunks — only ADD new data, never overwrite existing arrays.
-        5. Call `update_guidance` at the end to finalize.
-    </PrimaryObjectives>
+{objectives_block}
 
-    <JsonPatchRules>
-        **How to ADD data to the document:**
+{patch_rules_block}
 
-        Creating initial structure (when document is empty):
-          {{"op":"add", "path":"/metadata", "value":{{"title":"...", "author":"...", "date":"..."}} }}
-          {{"op":"add", "path":"/sections", "value":[] }}
-
-        Adding a new section:
-          {{"op":"add", "path":"/sections/-", "value":{{"section_name":"Overview", "source_pages":1, "fields":[], "tables":[], "subsections":[]}} }}
-
-        Appending fields to a section (use "/-" to append):
-          {{"op":"add", "path":"/sections/0/fields/-", "value":{{"label":"Total Revenue","value":1500000,"type":"currency","source_page":1}} }}
-          {{"op":"add", "path":"/sections/0/fields/-", "value":{{"label":"Growth Rate","value":"12.5%","type":"percentage","source_page":1}} }}
-
-        ⚠ NEVER do this (replaces the entire array, destroying previous data):
-          {{"op":"add", "path":"/sections/0/fields", "value":{{"label":"X"}} }}     ← WRONG: replaces array with object
-          {{"op":"add", "path":"/sections/0/fields", "value":[{{"label":"X"}}] }}   ← WRONG: replaces array with new array
-
-        **Key rule: "/-" means APPEND. Always use it when adding to existing arrays.**
-
-        Correcting a single value:
-          {{"op":"replace", "path":"/sections/0/fields/2/value", "value":"corrected value"}}
-
-        Removing a wrong entry:
-          {{"op":"remove", "path":"/sections/0/fields/5"}}
-    </JsonPatchRules>
-
-    <OperationalConstraints>
-        - **Recon before write:** Use `inspect_keys` to check array lengths and structure before patching. One recon iteration is usually enough.
-        - **Batch writes:** Put all patch operations for this chunk in a single `apply_patches` call when possible.
-        - **Finalization gate:** `update_guidance` MUST be the ONLY tool call in its response. Do not combine it with other tools.
-        - **Error recovery:** If `apply_patches` fails, read the error message — it tells you exactly how to fix the issue. Then retry.
-        - **No over-reading:** Don't read every field. Use `inspect_keys` for lengths, `read_value` only for specific items you need to verify.
-        - **Schema inspection:** If the TargetSchema above appears truncated or incomplete, use `inspect_keys`, `read_value`, or `search_pointer` with `source="schema"` to explore the full schema structure. This lets you discover required properties, nested object definitions, and allowed types that may not be visible in the truncated prompt.
-    </OperationalConstraints>
+{constraints_block}
 
     <GuidanceProtocol>
         The Guidance object is the ONLY bridge between chunks. The next invocation
