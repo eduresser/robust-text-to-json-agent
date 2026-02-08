@@ -2,8 +2,7 @@ from typing import Any, Optional
 
 from langgraph.graph import END, StateGraph
 
-from clients import reset_clients_cache
-from settings import get_settings, reset_settings_cache
+from settings import get_settings
 
 from agent.nodes import (
     call_llm_node,
@@ -119,9 +118,6 @@ def extract(
 
     final_state = app.invoke(initial_state)
 
-    reset_clients_cache()
-    reset_settings_cache()
-
     return {
         "json_document": final_state.get("json_document", {}),
         "metadata": {
@@ -131,3 +127,64 @@ def extract(
         },
         "error": final_state.get("error"),
     }
+
+def rich_extract(
+    text: str,
+    schema: Optional[dict[str, Any]],
+    max_iterations_per_chunk: int,
+) -> dict[str, Any]:
+    """Execute extraction with progress visualization (uses Rich via cli/)."""
+    from agent.graph import create_graph
+    from agent.state import AgentState
+    from cli import (
+        print_error_panel,
+        print_result_panel,
+        print_start_panel,
+        run_live_progress,
+    )
+
+    settings = get_settings()
+    model_name = settings.CHAT_MODEL
+    app = create_graph()
+
+    initial_state: AgentState = {
+        "text": text,
+        "target_schema": schema,
+        "max_iterations": max_iterations_per_chunk,
+        "chunks": [],
+        "current_chunk_idx": 0,
+        "json_document": {},
+        "guidance": {},
+        "messages": [],
+        "is_chunk_finalized": False,
+        "iteration_count": 0,
+        "token_usage": {},
+    }
+
+    print_start_panel(model_name, len(text), schema is not None)
+    final_state = run_live_progress(
+        app, initial_state, model_name, max_iterations_per_chunk
+    )
+
+    token_usage = final_state.get("token_usage", {})
+
+    result = {
+        "json_document": final_state.get("json_document", {}),
+        "metadata": {
+            "total_chunks": len(final_state.get("chunks", [])),
+            "final_guidance": final_state.get("guidance", {}),
+            "token_usage": token_usage,
+        },
+        "error": final_state.get("error"),
+    }
+
+    if result.get("error"):
+        print_error_panel(result["error"])
+    else:
+        print_result_panel(
+            result["metadata"]["total_chunks"],
+            len(result["json_document"]),
+            token_usage,
+        )
+
+    return result

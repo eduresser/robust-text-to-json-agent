@@ -1,6 +1,7 @@
 from typing import Any, Optional
 
-from settings import get_settings
+from clients import reset_clients_cache
+from settings import get_settings, reset_settings_cache
 
 
 def extract(
@@ -45,70 +46,14 @@ def extract(
         max_iterations_per_chunk = get_settings().MAX_ITERATIONS_PER_CHUNK
 
     if show_progress:
-        return _extract_with_progress(text, schema, max_iterations_per_chunk)
-
-    from agent.graph import extract as agent_extract
-    return agent_extract(text, schema, max_iterations_per_chunk)
-
-
-def _extract_with_progress(
-    text: str,
-    schema: Optional[dict[str, Any]],
-    max_iterations_per_chunk: int,
-) -> dict[str, Any]:
-    """Execute extraction with progress visualization (uses Rich via cli/)."""
-    from agent.graph import create_graph
-    from agent.state import AgentState
-    from cli import (
-        print_error_panel,
-        print_result_panel,
-        print_start_panel,
-        run_live_progress,
-    )
-
-    settings = get_settings()
-    model_name = settings.CHAT_MODEL
-    app = create_graph()
-
-    initial_state: AgentState = {
-        "text": text,
-        "target_schema": schema,
-        "max_iterations": max_iterations_per_chunk,
-        "chunks": [],
-        "current_chunk_idx": 0,
-        "json_document": {},
-        "guidance": {},
-        "messages": [],
-        "is_chunk_finalized": False,
-        "iteration_count": 0,
-        "token_usage": {},
-    }
-
-    print_start_panel(model_name, len(text), schema is not None)
-    final_state = run_live_progress(
-        app, initial_state, model_name, max_iterations_per_chunk
-    )
-
-    token_usage = final_state.get("token_usage", {})
-
-    result = {
-        "json_document": final_state.get("json_document", {}),
-        "metadata": {
-            "total_chunks": len(final_state.get("chunks", [])),
-            "final_guidance": final_state.get("guidance", {}),
-            "token_usage": token_usage,
-        },
-        "error": final_state.get("error"),
-    }
-
-    if result.get("error"):
-        print_error_panel(result["error"])
+        from agent.graph import rich_extract
+        result = rich_extract(text, schema, max_iterations_per_chunk)
     else:
-        print_result_panel(
-            result["metadata"]["total_chunks"],
-            len(result["json_document"]),
-            token_usage,
-        )
+        from agent.graph import extract
+        result = extract(text, schema, max_iterations_per_chunk)
+
+    reset_clients_cache()
+    reset_settings_cache()
 
     return result
 
