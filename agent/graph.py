@@ -1,7 +1,9 @@
 from typing import Any, Optional
 
 from langgraph.graph import END, StateGraph
-from settings import get_settings
+
+from clients import reset_clients_cache
+from settings import get_settings, reset_settings_cache
 
 from agent.nodes import (
     call_llm_node,
@@ -111,6 +113,9 @@ def extract(
     }
 
     final_state = app.invoke(initial_state)
+
+    reset_clients_cache()
+    reset_settings_cache()
 
     return {
         "json_document": final_state.get("json_document", {}),
