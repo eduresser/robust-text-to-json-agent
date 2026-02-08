@@ -66,7 +66,7 @@ def build_system_prompt(
     <PrimaryObjectives>
         1. Extract meaningful data from the TextChunk into the JSON Document.
         2. Follow the TargetSchema structure.
-        3. Create SEPARATE sections for each distinct topic in the document (e.g., "INFORMAÇÕES GERAIS", "MERCADO DE GALPÕES", "DESEMPENHO").
+        3. Create SEPARATE sections for each distinct topic in the document (e.g., "Overview", "Financial Data", "Performance").
         4. Preserve all data from previous chunks — only ADD new data, never overwrite existing arrays.
         5. Call `update_guidance` at the end to finalize.
     </PrimaryObjectives>
@@ -75,15 +75,15 @@ def build_system_prompt(
         **How to ADD data to the document:**
 
         Creating initial structure (when document is empty):
-          {{"op":"add", "path":"/metadata", "value":{{"fund_name":"...", "fund_ticker":"...", "reference_date":"..."}} }}
+          {{"op":"add", "path":"/metadata", "value":{{"title":"...", "author":"...", "date":"..."}} }}
           {{"op":"add", "path":"/sections", "value":[] }}
 
         Adding a new section:
-          {{"op":"add", "path":"/sections/-", "value":{{"section_name":"INFORMAÇÕES GERAIS", "source_pages":3, "fields":[], "tables":[], "subsections":[]}} }}
+          {{"op":"add", "path":"/sections/-", "value":{{"section_name":"Overview", "source_pages":1, "fields":[], "tables":[], "subsections":[]}} }}
 
         Appending fields to a section (use "/-" to append):
-          {{"op":"add", "path":"/sections/0/fields/-", "value":{{"label":"Cota Patrimonial","value":11.94,"type":"currency","source_page":3}} }}
-          {{"op":"add", "path":"/sections/0/fields/-", "value":{{"label":"Cota de Mercado","value":9.25,"type":"currency","source_page":3}} }}
+          {{"op":"add", "path":"/sections/0/fields/-", "value":{{"label":"Total Revenue","value":1500000,"type":"currency","source_page":1}} }}
+          {{"op":"add", "path":"/sections/0/fields/-", "value":{{"label":"Growth Rate","value":"12.5%","type":"percentage","source_page":1}} }}
 
         ⚠ NEVER do this (replaces the entire array, destroying previous data):
           {{"op":"add", "path":"/sections/0/fields", "value":{{"label":"X"}} }}     ← WRONG: replaces array with object
@@ -123,17 +123,17 @@ def build_system_prompt(
         - `last_path`: exact JSON Pointer you last wrote to (e.g. "/sections/2/fields/-").
         - `sections_snapshot`: compact map of ALL sections. Use abbreviations.
           Format: "[idx]NAME(Nflds,Ntbls,Nsubs)" with "(building)" if incomplete.
-          Example: "[0]INFO_GERAIS(12flds) [1]MERCADO(8flds,1tbl) [2]DESEMP(3flds,building)"
+          Example: "[0]OVERVIEW(8flds) [1]FINANCIALS(6flds,2tbls) [2]PERFORMANCE(3flds,building)"
         - `items_added`: what you added THIS chunk with key values. Be specific.
-          Example: "5 fields→DESEMPENHO: Rent.Mensal=2.3%, DY=0.8%, PL=R$1.2bi; 1 table→MERCADO: 4 rows vacância por região"
+          Example: "5 fields→FINANCIALS: Revenue=$1.5M, Margin=32%, EBITDA=$480K; 1 table→PERFORMANCE: 4 rows quarterly results"
         - `open_section`: section/table still being built + what's missing.
-          Example: "RENTABILIDADE @ /sections/2/tables/0 — has Jan-Jun rows, missing Jul-Dec"
+          Example: "PERFORMANCE @ /sections/2/tables/0 — has Q1-Q2 rows, missing Q3-Q4"
         - `text_excerpt`: copy the LAST ~150-200 chars of relevant text from the chunk end.
           This helps detect if data was cut mid-flow (tables, lists, sentences).
         - `next_expectations`: predict what comes next based on document structure.
-          Example: "expect Jul-Dec rentabilidade rows, then CARTEIRA DE ATIVOS section"
+          Example: "expect Q3-Q4 performance rows, then RISK FACTORS section"
         - `pending_data`: anything unresolved (TBD values, forward references, ambiguities).
-          Example: "aluguel 'a definir'; contrato #42 mencionado sem detalhes"
+          Example: "contract value 'TBD'; item #42 mentioned without details"
         - `extracted_entities_count`: total fields/rows/items you added.
 
         **Style rules:** abbreviate aggressively (flds, tbls, subs, sect, @, →, =).
