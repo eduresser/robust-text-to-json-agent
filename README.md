@@ -32,7 +32,7 @@ The agent employs several mechanisms to prevent the LLM from hallucinating, dupl
 | **Type downgrade prevention**       | Blocks replacing an object/array with a scalar value.                                                                           |
 | **Mandatory duplicate check**       | `search_pointer` is described as mandatory before creating list items, so the LLM searches for existing entities first.       |
 | **Schema enforcement**              | Every `add`/`replace` value is validated against the JSON Schema (type, format, required fields, `additionalProperties`). |
-| **Prescriptive error messages**     | When a patch fails, the error message tells the LLM_exactly_ how to fix it (e.g., "use `/-` to append").                    |
+| **Prescriptive error messages**     | When a patch fails, the error message tells the LLM_exactly_ how to fix it (e.g., "use `/-` to append").                      |
 | **Context trimming with retry**     | If the LLM stops producing tool calls (context full), old message rounds are trimmed and the call is retried.                   |
 | **Forced tool calling**             | `tool_choice="required"` ensures the LLM always uses tools instead of generating free-form text.                              |
 
@@ -189,7 +189,6 @@ text-to-json/
 │   ├── apply_patches.py       # SchemaPatchChecker — RFC 6902 with schema validation
 │   └── update_guidance.py     # Finalize chunk and build guidance for the next
 ├── chunking/
-│   ├── __init__.py
 │   └── semantic.py            # Semantic chunking with embedding breakpoints + fallback
 ├── cli/
 │   ├── app.py                 # argparse CLI definition
