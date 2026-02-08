@@ -21,11 +21,19 @@ def messages_reducer(
 
 
 class Guidance(TypedDict, total=False):
-    """State continuity passed between chunks."""
+    """State continuity passed between chunks.
 
-    last_processed_path: str
-    current_context: str
-    pending_action: str
+    Designed to carry maximum context in minimum tokens so the next chunk
+    can continue extraction seamlessly.
+    """
+
+    last_path: str
+    sections_snapshot: str
+    items_added: str
+    open_section: str
+    text_excerpt: str
+    next_expectations: str
+    pending_data: str
     extracted_entities_count: int
 
 
@@ -43,9 +51,9 @@ class AgentState(TypedDict, total=False):
 
     guidance: Guidance
 
+    # Messages include SystemMessage, HumanMessage, AIMessage (with tool_calls),
+    # and ToolMessage responses. The reducer handles chunk resets.
     messages: Annotated[list[BaseMessage], messages_reducer]
-
-    actions_results: list[dict[str, Any]]
 
     is_chunk_finalized: bool
     iteration_count: int

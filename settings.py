@@ -21,6 +21,20 @@ class Settings(BaseSettings):
 
     SQLITE_DB_PATH: str = ".cache/checkpoints.db"
 
+    MAX_ITERATIONS_PER_CHUNK: int = 50
+
+    # --- Truncator limits (chars) ---
+    TRUNCATE_SKELETON_LIMIT: int = 6000
+    TRUNCATE_GUIDANCE_LIMIT: int = 6000
+    TRUNCATE_READ_VALUE_LIMIT: int = 6000
+
+    # --- Truncator config ---
+    TRUNCATE_INDENTATION: int = 4
+    TRUNCATE_MIN_STRING_LEN: int = 23
+    TRUNCATE_ELLIPSIS_SIZE: int = 3
+    TRUNCATE_MIN_ARRAY_ITEMS: int = 2
+    TRUNCATE_MIN_OBJECT_KEYS: int = 2
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

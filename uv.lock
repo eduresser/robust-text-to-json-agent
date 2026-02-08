@@ -1767,8 +1767,6 @@ name = "text-to-json"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "jsonpatch" },
-    { name = "jsonpointer" },
     { name = "langchain" },
     { name = "langchain-experimental" },
     { name = "langchain-openai" },
@@ -1788,8 +1786,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "jsonpatch", specifier = ">=1.33" },
-    { name = "jsonpointer", specifier = ">=3.0.0" },
     { name = "langchain", specifier = ">=0.3.14" },
     { name = "langchain-experimental", specifier = ">=0.3.4" },
     { name = "langchain-openai", specifier = ">=0.3.0" },

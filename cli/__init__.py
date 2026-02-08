@@ -1,4 +1,6 @@
+from .app import main
 from .rich_display import (
+    TokenUsage,
     console,
     create_progress_display,
     print_error_panel,
@@ -9,6 +11,8 @@ from .rich_display import (
 )
 
 __all__ = [
+    "main",
+    "TokenUsage",
     "console",
     "create_progress_display",
     "print_error_panel",
