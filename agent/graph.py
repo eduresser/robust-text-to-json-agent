@@ -110,6 +110,7 @@ def extract(
         "messages": [],
         "is_chunk_finalized": False,
         "iteration_count": 0,
+        "token_usage": {},
     }
 
     final_state = app.invoke(initial_state)
@@ -122,6 +123,7 @@ def extract(
         "metadata": {
             "total_chunks": len(final_state.get("chunks", [])),
             "final_guidance": final_state.get("guidance", {}),
+            "token_usage": final_state.get("token_usage", {}),
         },
         "error": final_state.get("error"),
     }

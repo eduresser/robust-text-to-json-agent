@@ -81,6 +81,7 @@ def _extract_with_progress(
         "messages": [],
         "is_chunk_finalized": False,
         "iteration_count": 0,
+        "token_usage": {},
     }
 
     print_start_panel(model_name, len(text), schema is not None)

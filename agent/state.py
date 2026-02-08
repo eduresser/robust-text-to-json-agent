@@ -20,6 +20,30 @@ def messages_reducer(
     return add_messages(current, new)
 
 
+def token_usage_reducer(
+    current: dict[str, int], new: dict[str, int]
+) -> dict[str, int]:
+    """Accumulate token usage counters across LLM calls."""
+    if not current:
+        current = {}
+    if not new:
+        return current
+    return {
+        "input_tokens": current.get("input_tokens", 0) + new.get("input_tokens", 0),
+        "output_tokens": current.get("output_tokens", 0) + new.get("output_tokens", 0),
+        "total_tokens": current.get("total_tokens", 0) + new.get("total_tokens", 0),
+        "llm_calls": current.get("llm_calls", 0) + new.get("llm_calls", 0),
+        "cache_creation_input_tokens": (
+            current.get("cache_creation_input_tokens", 0)
+            + new.get("cache_creation_input_tokens", 0)
+        ),
+        "cache_read_input_tokens": (
+            current.get("cache_read_input_tokens", 0)
+            + new.get("cache_read_input_tokens", 0)
+        ),
+    }
+
+
 class Guidance(TypedDict, total=False):
     """State continuity passed between chunks.
 
@@ -58,5 +82,7 @@ class AgentState(TypedDict, total=False):
     is_chunk_finalized: bool
     iteration_count: int
     max_iterations: int
+
+    token_usage: Annotated[dict[str, int], token_usage_reducer]
 
     error: Optional[str]

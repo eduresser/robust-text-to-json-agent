@@ -190,6 +190,33 @@ def _trim_messages(
     return trimmed
 
 
+def _extract_token_usage(*responses: BaseMessage) -> dict[str, int]:
+    """Build a token_usage delta dict from one or more LLM responses."""
+    usage: dict[str, int] = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "llm_calls": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+    }
+    for resp in responses:
+        meta = getattr(resp, "usage_metadata", None)
+        if not meta:
+            continue
+        usage["input_tokens"] += meta.get("input_tokens", 0)
+        usage["output_tokens"] += meta.get("output_tokens", 0)
+        usage["total_tokens"] += meta.get("total_tokens", 0)
+        usage["cache_creation_input_tokens"] += meta.get(
+            "cache_creation_input_tokens", 0
+        )
+        usage["cache_read_input_tokens"] += meta.get(
+            "cache_read_input_tokens", 0
+        )
+        usage["llm_calls"] += 1
+    return usage
+
+
 def call_llm_node(state: AgentState) -> dict[str, Any]:
     """
     Node that calls the LLM with tools bound.
@@ -226,6 +253,7 @@ def call_llm_node(state: AgentState) -> dict[str, Any]:
         return {
             "messages": trimmed + [retry_response],
             "iteration_count": iteration + 1,
+            "token_usage": _extract_token_usage(retry_response),
         }
 
     # ── Check for tool calls ──
@@ -234,6 +262,7 @@ def call_llm_node(state: AgentState) -> dict[str, Any]:
         return {
             "messages": [response],
             "iteration_count": iteration + 1,
+            "token_usage": _extract_token_usage(response),
         }
 
     trimmed = _trim_messages(messages)
@@ -242,6 +271,7 @@ def call_llm_node(state: AgentState) -> dict[str, Any]:
         return {
             "messages": [response],
             "iteration_count": iteration + 1,
+            "token_usage": _extract_token_usage(response),
         }
 
     retry_response = llm.invoke(trimmed)
@@ -249,6 +279,7 @@ def call_llm_node(state: AgentState) -> dict[str, Any]:
     return {
         "messages": trimmed + [retry_response],
         "iteration_count": iteration + 1,
+        "token_usage": _extract_token_usage(response, retry_response),
     }
 
 
