@@ -172,38 +172,38 @@ flowchart TB
 
 ```
 text-to-json/
-├── main.py                    # CLI entry point and extract() API
-├── settings.py                # Pydantic Settings (env vars, defaults)
-├── clients.py                 # LLM and embeddings client factory
+├── main.py                     # CLI entry point and extract() API
+├── settings.py                 # Pydantic Settings (env vars, defaults)
+├── clients.py                  # LLM and embeddings client factory
 ├── agent/
-│   ├── graph.py               # LangGraph state machine definition
-│   ├── state.py               # AgentState and Guidance TypedDicts
-│   ├── nodes.py               # Graph node functions (chunk, call_llm, execute_tools, etc.)
-│   └── prompts.py             # System prompt and user message builders
+│   ├── graph.py                # LangGraph state machine definition
+│   ├── state.py                # AgentState and Guidance TypedDicts
+│   ├── nodes.py                # Graph node functions (chunk, call_llm, execute_tools, etc.)
+│   └── prompts.py              # System prompt and user message builders
 ├── tools/
-│   ├── definitions.py         # Tool definitions with @tool decorators and ALL_TOOLS list
-│   ├── inspect_keys.py        # JsonInspector — navigate and summarize JSON structure
-│   ├── read_value.py          # Read value at a JSON Pointer with truncation
-│   ├── search_pointer.py      # Search keys/values, return JSON Pointers
-│   ├── apply_patches.py       # SchemaPatchChecker — RFC 6902 with schema validation
-│   └── update_guidance.py     # Finalize chunk and build guidance for the next
+│   ├── definitions.py          # Tool definitions with @tool decorators and ALL_TOOLS list
+│   ├── inspect_keys.py         # JsonInspector — navigate and summarize JSON structure
+│   ├── read_value.py           # Read value at a JSON Pointer with truncation
+│   ├── search_pointer.py       # Search keys/values, return JSON Pointers
+│   ├── apply_patches.py        # SchemaPatchChecker — RFC 6902 with schema validation
+│   └── update_guidance.py      # Finalize chunk and build guidance for the next
 ├── chunking/
-│   └── semantic.py            # Semantic chunking with embedding breakpoints + fallback
+│   └── semantic.py             # Semantic chunking with embedding breakpoints + fallback
 ├── cli/
-│   ├── app.py                 # argparse CLI definition
-│   └── rich_display.py        # Rich live progress, panels, token tracking
+│   ├── app.py                  # argparse CLI definition
+│   └── rich_display.py         # Rich live progress, panels, token tracking
 ├── misc/
-│   └── truncator.py           # Smart JSON truncator (strings, arrays, objects)
+│   └── truncator.py            # Smart JSON truncator (strings, arrays, objects)
 ├── tests/
-│   ├── conftest.py            # Shared fixtures (schemas, documents)
-│   ├── test_apply_patches.py  # SchemaPatchChecker, RFC 6902, schema validation, oneOf/allOf
-│   ├── test_truncator.py      # Smart truncation strategies
-│   ├── test_inspect_keys.py   # JSON inspection and navigation
-│   ├── test_search_pointer.py # Key/value search, fuzzy matching
-│   ├── test_read_value.py     # Value reading with truncation
-│   ├── test_nodes.py          # Pre-validation, message trimming, helpers
-│   ├── test_state.py          # State reducers (messages, token usage)
-│   ├── test_chunking.py       # Chunk merging, fallback splitting
+│   ├── conftest.py             # Shared fixtures (schemas, documents)
+│   ├── test_apply_patches.py   # SchemaPatchChecker, RFC 6902, schema validation, oneOf/allOf
+│   ├── test_truncator.py       # Smart truncation strategies
+│   ├── test_inspect_keys.py    # JSON inspection and navigation
+│   ├── test_search_pointer.py  # Key/value search, fuzzy matching
+│   ├── test_read_value.py      # Value reading with truncation
+│   ├── test_nodes.py           # Pre-validation, message trimming, helpers
+│   ├── test_state.py           # State reducers (messages, token usage)
+│   ├── test_chunking.py        # Chunk merging, fallback splitting
 │   └── test_update_guidance.py # Guidance creation
 └── pyproject.toml
 ```
