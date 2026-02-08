@@ -1,6 +1,6 @@
 [project]
 name = "text-to-json"
-version = "2.1.0"
+version = "2.2.0"
 description = "LangGraph agent that extracts structured JSON from arbitrarily long text via LLM — with optional JSON Schema, semantic chunking, incremental JSON Patch, and anti-hallucination safeguards."
 readme = "README.md"
 requires-python = ">=3.11"
