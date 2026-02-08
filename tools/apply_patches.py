@@ -442,6 +442,27 @@ class SchemaPatchChecker:
                 push_err("failed in anyOf (no alternative accepted the value)")
             return errors
 
+        # oneOf — exactly one sub-schema must match
+        if isinstance(schema, dict) and "oneOf" in schema:
+            passing = [
+                s for s in schema["oneOf"]
+                if len(cls._validate_instance(s, instance, at_pointer)) == 0
+            ]
+            if len(passing) == 0:
+                push_err("failed in oneOf (no alternative accepted the value)")
+            elif len(passing) > 1:
+                push_err(
+                    f"failed in oneOf (matched {len(passing)} alternatives, "
+                    f"but exactly 1 must match)"
+                )
+            return errors
+
+        # allOf — every sub-schema must match
+        if isinstance(schema, dict) and "allOf" in schema:
+            for s in schema["allOf"]:
+                errors.extend(cls._validate_instance(s, instance, at_pointer))
+            return errors
+
         # enum
         if isinstance(schema, dict) and "enum" in schema:
             ok = any(cls._deep_equal(v, instance) for v in schema["enum"])
@@ -572,13 +593,23 @@ class SchemaPatchChecker:
         if isinstance(schema, dict) and schema.get("__any"):
             return [cls._ANY_SCHEMA]
 
-        if isinstance(schema, dict) and "anyOf" in schema:
-            all_candidates: list[Any] = []
-            for s in schema["anyOf"]:
+        for keyword in ("anyOf", "oneOf"):
+            if isinstance(schema, dict) and keyword in schema:
+                all_candidates: list[Any] = []
+                for s in schema[keyword]:
+                    all_candidates.extend(
+                        cls._schema_candidates_for_property(s, prop_name)
+                    )
+                return all_candidates if all_candidates else []
+
+        if isinstance(schema, dict) and "allOf" in schema:
+            # For allOf, merge candidates from all sub-schemas
+            all_candidates = []
+            for s in schema["allOf"]:
                 all_candidates.extend(
                     cls._schema_candidates_for_property(s, prop_name)
                 )
-            return all_candidates if all_candidates else []
+            return all_candidates if all_candidates else [cls._ANY_SCHEMA]
 
         if not isinstance(schema, dict):
             return [cls._ANY_SCHEMA]
@@ -603,11 +634,18 @@ class SchemaPatchChecker:
         if isinstance(schema, dict) and schema.get("__any"):
             return [cls._ANY_SCHEMA]
 
-        if isinstance(schema, dict) and "anyOf" in schema:
-            all_candidates: list[Any] = []
-            for s in schema["anyOf"]:
+        for keyword in ("anyOf", "oneOf"):
+            if isinstance(schema, dict) and keyword in schema:
+                all_candidates: list[Any] = []
+                for s in schema[keyword]:
+                    all_candidates.extend(cls._schema_candidates_for_index(s))
+                return all_candidates if all_candidates else []
+
+        if isinstance(schema, dict) and "allOf" in schema:
+            all_candidates = []
+            for s in schema["allOf"]:
                 all_candidates.extend(cls._schema_candidates_for_index(s))
-            return all_candidates if all_candidates else []
+            return all_candidates if all_candidates else [cls._ANY_SCHEMA]
 
         if isinstance(schema, dict) and schema.get("items"):
             return [schema["items"]]
@@ -1150,8 +1188,11 @@ class SchemaPatchChecker:
             return False
         if isinstance(schema, dict) and schema.get("__any"):
             return True
-        if isinstance(schema, dict) and "anyOf" in schema:
+        if isinstance(schema, dict) and ("anyOf" in schema or "oneOf" in schema):
             return True
+        if isinstance(schema, dict) and "allOf" in schema:
+            # Property is allowed if ANY sub-schema allows it
+            return any(cls._is_prop_allowed(s, key) for s in schema["allOf"])
         if not isinstance(schema, dict):
             return True
         ap = schema.get("additionalProperties")
@@ -1168,8 +1209,11 @@ class SchemaPatchChecker:
             return False
         if isinstance(schema, dict) and schema.get("__any"):
             return False
-        if isinstance(schema, dict) and "anyOf" in schema:
+        if isinstance(schema, dict) and ("anyOf" in schema or "oneOf" in schema):
             return False
+        if isinstance(schema, dict) and "allOf" in schema:
+            # Required if ANY sub-schema requires it
+            return any(cls._is_required_by_schema(s, key) for s in schema["allOf"])
         if not isinstance(schema, dict):
             return False
         req = schema.get("required", [])
