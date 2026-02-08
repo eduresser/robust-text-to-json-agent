@@ -115,6 +115,7 @@ def _handle_output(
     )
 
     if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(output_json, encoding="utf-8")
         if not args.quiet:
             if show_progress:
