@@ -1,6 +1,6 @@
 [project]
 name = "text-to-json"
-version = "2.3.0"
+version = "2.4.0"
 description = "LangGraph agent that extracts structured JSON from arbitrarily long text via LLM — with optional JSON Schema, semantic chunking, incremental JSON Patch, and anti-hallucination safeguards."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-text-to-json = "main:main"
+text-to-json = "text_to_json.cli:main"
 
 [dependency-groups]
 dev = [
@@ -33,4 +33,4 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["agent", "tools", "chunking", "cli"]
+packages = ["src/text_to_json"]
