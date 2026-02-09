@@ -4,19 +4,32 @@ from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
-from agent.prompts import build_system_prompt, build_user_message
-from agent.state import AgentState
-from clients import get_chat_model
-from chunking.semantic import chunk_with_fallback
-from settings import get_settings
-from misc.truncator import Truncator, TruncatorConfig
-from tools.apply_patches import apply_patches
-from tools.inspect_keys import inspect_keys
-from tools.read_value import read_value
-from tools.search_pointer import search_pointer
-from tools.update_guidance import update_guidance
+from text_to_json.agent.prompts import build_system_prompt, build_user_message
+from text_to_json.agent.state import AgentState
+from text_to_json.clients import get_chat_model
+from text_to_json.chunking.semantic import chunk_with_fallback
+from text_to_json.settings import get_settings
+from text_to_json.misc.truncator import Truncator, TruncatorConfig
+from text_to_json.tools.apply_patches import apply_patches
+from text_to_json.tools.inspect_keys import inspect_keys
+from text_to_json.tools.json_pointer import parse_json_pointer_lenient
+from text_to_json.tools.read_value import read_value
+from text_to_json.tools.search_pointer import search_pointer
+from text_to_json.tools.update_guidance import update_guidance
 
 logger = logging.getLogger(__name__)
+
+# ── Guard thresholds ─────────────────────────────────────────────────
+# Minimum number of leaf values in a document before the shrinkage guard
+# kicks in. Small documents are not checked.
+SHRINKAGE_GUARD_MIN_ITEMS: int = 10
+# Maximum ratio of (new / old) leaf count allowed after a patch batch.
+# Below this ratio the patch is rejected as a likely destructive overwrite.
+SHRINKAGE_GUARD_RATIO: float = 0.5
+# Same concept but for the pre-validation replace check on objects.
+DATA_LOSS_MIN_ITEMS: int = 5
+# Default number of recent LLM rounds kept when trimming context.
+DEFAULT_KEEP_LAST_N_ROUNDS: int = 2
 
 
 def _get_truncator() -> Truncator:
@@ -140,7 +153,7 @@ _TRIM_SUMMARY = (
 
 def _trim_messages(
     messages: list[BaseMessage],
-    keep_last_n_rounds: int = 2,
+    keep_last_n_rounds: int = DEFAULT_KEEP_LAST_N_ROUNDS,
 ) -> list[BaseMessage] | None:
     """Trim old message rounds to free context space.
 
@@ -265,7 +278,12 @@ def call_llm_node(state: AgentState) -> dict[str, Any]:
     # ── First attempt ──
     try:
         response = llm.invoke(messages)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — intentionally broad
+        # LLM SDKs raise diverse exception hierarchies (rate-limit,
+        # context-too-long, network, JSON decoding, etc.).  The except
+        # is intentionally broad so the trim-and-retry fallback can
+        # handle *any* transient failure.
+        logger.warning("LLM call failed (%s: %s), attempting trim+retry", type(exc).__name__, exc)
         trimmed = _trim_messages(messages)
         if trimmed is None:
             raise  # Can't trim further — propagate the error
@@ -365,8 +383,8 @@ def execute_tools_node(state: AgentState) -> dict[str, Any]:
                     old_count = _count_nested_items(new_document)
                     new_count = _count_nested_items(candidate)
                     if (
-                        old_count > 10
-                        and new_count < old_count * 0.5
+                        old_count > SHRINKAGE_GUARD_MIN_ITEMS
+                        and new_count < old_count * SHRINKAGE_GUARD_RATIO
                     ):
                         result = {
                             "ok": False,
@@ -396,7 +414,8 @@ def execute_tools_node(state: AgentState) -> dict[str, Any]:
                 new_guidance = result.get("guidance", new_guidance)
                 is_finalized = True
 
-        except Exception as e:
+        except (ValueError, KeyError, TypeError, RuntimeError) as e:
+            logger.warning("Tool '%s' raised %s: %s", name, type(e).__name__, e)
             result = {"error": f"Tool execution error: {e}"}
 
         # Truncate read_value results to avoid blowing up context
@@ -432,12 +451,15 @@ def execute_tools_node(state: AgentState) -> dict[str, Any]:
 def _resolve_path(document: Any, path: str) -> tuple[bool, Any]:
     """Navigate a JSON document following a JSON Pointer path.
 
-    Returns (found, value) where found indicates whether the path resolved
-    to an existing location in the document.
+    Returns ``(found, value)`` where *found* indicates whether the path
+    resolved to an existing location in the document.
     """
     if not path or path == "/":
         return True, document
-    tokens = path.split("/")[1:]
+    try:
+        tokens = parse_json_pointer_lenient(path)
+    except ValueError:
+        return False, None
     current = document
     for t in tokens:
         if isinstance(current, dict) and t in current:
@@ -553,23 +575,187 @@ def _filter_duplicate_appends(
     return filtered, skipped
 
 
+def _check_invalid_path(
+    i: int, patch: dict, path: str,
+) -> dict[str, Any] | None:
+    """Check 1: path must start with '/'."""
+    if path and not path.startswith("/"):
+        return _make_error(
+            i, patch, path,
+            f'Invalid JSON Pointer: "{path}" must start with "/". '
+            f'Did you mean "/{path}"?',
+        )
+    return None
+
+
+def _check_add_on_existing_array(
+    i: int, patch: dict, path: str, value: Any, document: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Check 2: 'add' that would overwrite an existing array."""
+    if not path:
+        return None
+    found, current = _resolve_path(document, path)
+    if not found or not isinstance(current, list):
+        return None
+
+    n = len(current)
+    if isinstance(value, list):
+        return _make_error(
+            i, patch, path,
+            f'DESTRUCTIVE OVERWRITE: "{path}" already contains an '
+            f"array with {n} items. Your \"add\" would REPLACE ALL "
+            f"existing data with a new array of {len(value)} items. "
+            f"To APPEND items, use \"{path}/-\" for each: "
+            f'[{{"op":"add","path":"{path}/-","value":item1}}, ...]',
+        )
+    if isinstance(value, dict):
+        return _make_error(
+            i, patch, path,
+            f'DESTRUCTIVE OVERWRITE: "{path}" already contains an '
+            f"array with {n} items. Your \"add\" would REPLACE the "
+            f"entire array with a single object. "
+            f'To APPEND, use "{path}/-": '
+            f'{{"op":"add","path":"{path}/-","value":{{...}}}}',
+        )
+    # Scalar value replacing an array
+    return _make_error(
+        i, patch, path,
+        f'TYPE DOWNGRADE: "{path}" already contains an '
+        f"array with {n} items. Your \"add\" would REPLACE "
+        f"the entire array with a {type(value).__name__}. "
+        f'To APPEND, use "{path}/-": '
+        f'{{"op":"add","path":"{path}/-","value":...}}',
+    )
+
+
+def _check_add_at_root(
+    i: int, patch: dict, path: str, document: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Check 3: 'add' at root replaces entire document."""
+    item_count = _count_nested_items(document)
+    if item_count > 0:
+        return _make_error(
+            i, patch, path,
+            f"DESTRUCTIVE: \"add\" at root would REPLACE the entire "
+            f"document ({item_count} existing values). "
+            f"Add to specific paths instead (e.g., /metadata, /sections/-).",
+        )
+    return None
+
+
+def _check_replace_container(
+    i: int, patch: dict, path: str, value: Any, document: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Check 4: 'replace' on a container (array/object)."""
+    if not path:
+        return None
+    found, current = _resolve_path(document, path)
+    if not found:
+        return None
+
+    if isinstance(current, list) and len(current) > 0:
+        return _make_error(
+            i, patch, path,
+            f'DESTRUCTIVE REPLACE: "{path}" is an array with '
+            f"{len(current)} items. Replacing it would DISCARD all "
+            f"existing data. To update specific items, use "
+            f'"replace" on individual indices (e.g., "{path}/0/value"). '
+            f'To append new items, use "add" with "{path}/-".',
+        )
+    if isinstance(current, dict) and len(current) > 0:
+        nested = _count_nested_items(current)
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return _make_error(
+                i, patch, path,
+                f'TYPE DOWNGRADE: "{path}" is an object with '
+                f"{len(current)} keys ({nested} nested values). "
+                f"Replacing it with a {type(value).__name__} would "
+                f"DESTROY all nested data. To update a specific "
+                f"field, use \"{path}/fieldName\" as the path.",
+            )
+        if isinstance(value, dict):
+            old_count = nested
+            new_count = _count_nested_items(value)
+            if new_count < old_count * SHRINKAGE_GUARD_RATIO and old_count > DATA_LOSS_MIN_ITEMS:
+                return _make_error(
+                    i, patch, path,
+                    f'SIGNIFICANT DATA LOSS: replacing "{path}" '
+                    f"would reduce content from {old_count} to "
+                    f"{new_count} values ({100 - int(new_count / old_count * 100)}% loss). "
+                    f"Consider updating individual fields instead.",
+                )
+    return None
+
+
+def _check_remove_container(
+    i: int, patch: dict, path: str, document: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Check 5: 'remove' on a container with significant data."""
+    if not path:
+        return None
+    found, current = _resolve_path(document, path)
+    if not found:
+        return None
+    path_depth = len(path.split("/")) - 1  # /a/b/c → 3
+    nested = _count_nested_items(current)
+
+    if isinstance(current, list) and len(current) > 0:
+        return _make_error(
+            i, patch, path,
+            f'DATA LOSS WARNING: removing "{path}" would delete '
+            f"an array with {len(current)} items ({nested} total "
+            f"nested values). If you need to remove specific items, "
+            f"use their full path (e.g., \"{path}/0\").",
+        )
+    if (
+        isinstance(current, dict)
+        and nested > 2
+        and path_depth <= 3
+    ):
+        return _make_error(
+            i, patch, path,
+            f'DATA LOSS WARNING: removing "{path}" would delete '
+            f"an object with {len(current)} keys ({nested} total "
+            f"nested values). If you need to remove specific fields, "
+            f"use their full path (e.g., \"{path}/fieldName\").",
+        )
+    return None
+
+
+def _check_type_downgrade(
+    i: int, patch: dict, path: str, value: Any, document: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Check 6: scalar replacing a container (type downgrade)."""
+    if not path or value is None:
+        return None
+    found, current = _resolve_path(document, path)
+    if not found or current is None:
+        return None
+    cur_is_container = isinstance(current, (list, dict))
+    val_is_scalar = isinstance(value, (str, int, float, bool))
+    if cur_is_container and val_is_scalar:
+        nested = _count_nested_items(current)
+        if nested > 1:
+            ctype = "array" if isinstance(current, list) else "object"
+            return _make_error(
+                i, patch, path,
+                f'TYPE DOWNGRADE: "{path}" is a {ctype} with '
+                f"{nested} nested values. Replacing it with a "
+                f"{type(value).__name__} ({repr(value)[:60]}) would "
+                f"DESTROY all nested data. Update specific fields instead.",
+            )
+    return None
+
+
 def _pre_validate_patches(
     patches: list[dict[str, Any]],
     document: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """
-    Pre-validate patches for common LLM mistakes before sending to the
-    full schema validator. Catches destructive operations that would
-    silently discard accumulated data, returning prescriptive error messages.
+    """Pre-validate patches for common LLM mistakes before sending to the
+    full schema validator.
 
-    Checks performed:
-    1. Invalid path format (missing leading /)
-    2. "add" that would overwrite an existing array (should use /-  to append)
-    3. "add" at root (/) that would replace the entire document
-    4. "replace" on a container (array/object) — usually means the model
-       intended to append or update individual items
-    5. "remove" on a container with significant data — warns about data loss
-    6. Type downgrade — replacing an object/array with a scalar
+    Catches destructive operations that would silently discard accumulated
+    data, returning prescriptive error messages.
     """
     errors: list[dict[str, Any]] = []
 
@@ -580,154 +766,46 @@ def _pre_validate_patches(
         path = patch.get("path", "")
         value = patch.get("value")
 
-        # ── 1. Invalid path format ──
-        if path and not path.startswith("/"):
-            errors.append(_make_error(
-                i, patch, path,
-                f'Invalid JSON Pointer: "{path}" must start with "/". '
-                f'Did you mean "/{path}"?',
-            ))
+        # 1. Invalid path format
+        err = _check_invalid_path(i, patch, path)
+        if err:
+            errors.append(err)
             continue
 
-        # ── 2. "add" on existing array → destructive overwrite ──
-        if op == "add" and path:
-            found, current = _resolve_path(document, path)
-            if found and isinstance(current, list):
-                n = len(current)
-                if isinstance(value, list):
-                    errors.append(_make_error(
-                        i, patch, path,
-                        f'DESTRUCTIVE OVERWRITE: "{path}" already contains an '
-                        f"array with {n} items. Your \"add\" would REPLACE ALL "
-                        f"existing data with a new array of {len(value)} items. "
-                        f"To APPEND items, use \"{path}/-\" for each: "
-                        f'[{{"op":"add","path":"{path}/-","value":item1}}, ...]',
-                    ))
-                elif isinstance(value, dict):
-                    errors.append(_make_error(
-                        i, patch, path,
-                        f'DESTRUCTIVE OVERWRITE: "{path}" already contains an '
-                        f"array with {n} items. Your \"add\" would REPLACE the "
-                        f"entire array with a single object. "
-                        f'To APPEND, use "{path}/-": '
-                        f'{{"op":"add","path":"{path}/-","value":{{...}}}}',
-                    ))
-                else:
-                    # Scalar value replacing an array
-                    errors.append(_make_error(
-                        i, patch, path,
-                        f'TYPE DOWNGRADE: "{path}" already contains an '
-                        f"array with {n} items. Your \"add\" would REPLACE "
-                        f"the entire array with a {type(value).__name__}. "
-                        f'To APPEND, use "{path}/-": '
-                        f'{{"op":"add","path":"{path}/-","value":...}}',
-                    ))
+        # 2. "add" on existing array → destructive overwrite
+        if op == "add":
+            err = _check_add_on_existing_array(i, patch, path, value, document)
+            if err:
+                errors.append(err)
                 continue
 
-        # ── 3. "add" at root → replaces entire document ──
+        # 3. "add" at root → replaces entire document
         if op == "add" and (path == "" or path == "/"):
-            item_count = _count_nested_items(document)
-            if item_count > 0:
-                errors.append(_make_error(
-                    i, patch, path,
-                    f"DESTRUCTIVE: \"add\" at root would REPLACE the entire "
-                    f"document ({item_count} existing values). "
-                    f"Add to specific paths instead (e.g., /metadata, /sections/-).",
-                ))
+            err = _check_add_at_root(i, patch, path, document)
+            if err:
+                errors.append(err)
                 continue
 
-        # ── 4. "replace" on a container → likely should be per-item updates ──
-        if op == "replace" and path:
-            found, current = _resolve_path(document, path)
-            if found:
-                if isinstance(current, list) and len(current) > 0:
-                    errors.append(_make_error(
-                        i, patch, path,
-                        f'DESTRUCTIVE REPLACE: "{path}" is an array with '
-                        f"{len(current)} items. Replacing it would DISCARD all "
-                        f"existing data. To update specific items, use "
-                        f'"replace" on individual indices (e.g., "{path}/0/value"). '
-                        f'To append new items, use "add" with "{path}/-".',
-                    ))
-                    continue
-                if isinstance(current, dict) and len(current) > 0:
-                    nested = _count_nested_items(current)
-                    if isinstance(value, (str, int, float, bool)) or value is None:
-                        errors.append(_make_error(
-                            i, patch, path,
-                            f'TYPE DOWNGRADE: "{path}" is an object with '
-                            f"{len(current)} keys ({nested} nested values). "
-                            f"Replacing it with a {type(value).__name__} would "
-                            f"DESTROY all nested data. To update a specific "
-                            f"field, use \"{path}/fieldName\" as the path.",
-                        ))
-                        continue
-                    if isinstance(value, dict):
-                        old_count = nested
-                        new_count = _count_nested_items(value)
-                        if new_count < old_count * 0.5 and old_count > 5:
-                            errors.append(_make_error(
-                                i, patch, path,
-                                f'SIGNIFICANT DATA LOSS: replacing "{path}" '
-                                f"would reduce content from {old_count} to "
-                                f"{new_count} values ({100 - int(new_count / old_count * 100)}% loss). "
-                                f"Consider updating individual fields instead.",
-                            ))
-                            continue
+        # 4. "replace" on a container
+        if op == "replace":
+            err = _check_replace_container(i, patch, path, value, document)
+            if err:
+                errors.append(err)
+                continue
 
-        # ── 5. "remove" on a container with significant data ──
-        # Only block removal of high-level containers (depth <= 2), not
-        # individual leaf items. For example:
-        #   /sections/0/fields  → depth 3, is a container → block
-        #   /sections/0         → depth 2, is a container → block
-        #   /metadata           → depth 1, is a container → block
-        #   /sections/0/fields/2 → depth 4, is a leaf item → allow
-        if op == "remove" and path:
-            found, current = _resolve_path(document, path)
-            path_depth = len(path.split("/")) - 1  # /a/b/c → 3
-            if found:
-                nested = _count_nested_items(current)
-                if isinstance(current, list) and len(current) > 0:
-                    errors.append(_make_error(
-                        i, patch, path,
-                        f'DATA LOSS WARNING: removing "{path}" would delete '
-                        f"an array with {len(current)} items ({nested} total "
-                        f"nested values). If you need to remove specific items, "
-                        f"use their full path (e.g., \"{path}/0\").",
-                    ))
-                    continue
-                if (
-                    isinstance(current, dict)
-                    and nested > 2
-                    and path_depth <= 3
-                ):
-                    errors.append(_make_error(
-                        i, patch, path,
-                        f'DATA LOSS WARNING: removing "{path}" would delete '
-                        f"an object with {len(current)} keys ({nested} total "
-                        f"nested values). If you need to remove specific fields, "
-                        f"use their full path (e.g., \"{path}/fieldName\").",
-                    ))
-                    continue
+        # 5. "remove" on a container with significant data
+        if op == "remove":
+            err = _check_remove_container(i, patch, path, document)
+            if err:
+                errors.append(err)
+                continue
 
-        # ── 6. Type downgrade on any path (scalar replacing container) ──
-        if op in ("add", "replace") and path and value is not None:
-            found, current = _resolve_path(document, path)
-            if found and current is not None:
-                cur_is_container = isinstance(current, (list, dict))
-                val_is_scalar = isinstance(value, (str, int, float, bool))
-                if cur_is_container and val_is_scalar:
-                    nested = _count_nested_items(current)
-                    if nested > 1:
-                        ctype = "array" if isinstance(current, list) else "object"
-                        errors.append(_make_error(
-                            i, patch, path,
-                            f'TYPE DOWNGRADE: "{path}" is a {ctype} with '
-                            f"{nested} nested values. Replacing it with a "
-                            f"{type(value).__name__} ({repr(value)[:60]}) would "
-                            f"DESTROY all nested data. Update specific fields instead.",
-                        ))
-                        continue
+        # 6. Type downgrade (scalar replacing container)
+        if op in ("add", "replace"):
+            err = _check_type_downgrade(i, patch, path, value, document)
+            if err:
+                errors.append(err)
+                continue
 
     return errors
 

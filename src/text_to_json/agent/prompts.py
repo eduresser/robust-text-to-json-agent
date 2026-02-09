@@ -1,8 +1,8 @@
 import json
 from typing import Any, Optional
 
-from settings import get_settings
-from misc.truncator import Truncator, TruncatorConfig
+from text_to_json.settings import get_settings
+from text_to_json.misc.truncator import Truncator, TruncatorConfig
 
 
 def _get_truncator() -> Truncator:
