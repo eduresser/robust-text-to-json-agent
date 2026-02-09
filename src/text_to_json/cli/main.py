@@ -4,8 +4,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from cli.rich_display import console, print_json_panel
-from settings import get_settings
+from text_to_json.cli.rich_display import console, print_json_panel
+from text_to_json.settings import get_settings
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -132,7 +132,7 @@ def _handle_output(
 
 def main():
     """Entry point of the CLI."""
-    from main import extract
+    from text_to_json import extract
 
     parser = build_parser()
     args = parser.parse_args()

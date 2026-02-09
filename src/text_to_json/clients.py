@@ -9,7 +9,7 @@ from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from settings import get_settings
+from text_to_json.settings import get_settings
 
 
 @lru_cache(maxsize=1)
@@ -25,7 +25,7 @@ def get_embeddings() -> Embeddings:
 @lru_cache(maxsize=1)
 def get_chat_model() -> BaseChatModel:
     """Return an instance of the chat model with tools bound for extraction."""
-    from tools.definitions import ALL_TOOLS
+    from text_to_json.tools.definitions import ALL_TOOLS
 
     settings = get_settings()
     model = init_chat_model(

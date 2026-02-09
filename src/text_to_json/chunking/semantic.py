@@ -2,9 +2,13 @@ import logging
 
 from langchain_experimental.text_splitter import SemanticChunker
 
-from clients import get_embeddings
+from text_to_json.clients import get_embeddings
 
 logger = logging.getLogger(__name__)
+
+# Default parameters for the fallback RecursiveCharacterTextSplitter.
+DEFAULT_FALLBACK_CHUNK_SIZE: int = 8000
+DEFAULT_FALLBACK_CHUNK_OVERLAP: int = 400
 
 
 def semantic_chunk(
@@ -79,8 +83,8 @@ def _merge_small_chunks(chunks: list[str], min_size: int) -> list[str]:
 
 def chunk_with_fallback(
     text: str,
-    chunk_size: int = 8000,
-    chunk_overlap: int = 400,
+    chunk_size: int = DEFAULT_FALLBACK_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_FALLBACK_CHUNK_OVERLAP,
 ) -> list[str]:
     """
     Try semantic chunking, with fallback to RecursiveCharacterTextSplitter.
@@ -95,10 +99,14 @@ def chunk_with_fallback(
     """
     try:
         return semantic_chunk(text)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — intentionally broad
+        # Semantic chunking can fail for many reasons (embedding API errors,
+        # empty texts, numerical issues in breakpoint detection, etc.).
+        # The except is intentionally broad because *any* failure should
+        # trigger the deterministic fallback so extraction can proceed.
         from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-        logger.warning("Semantic chunking failed (%s). Using fallback recursive.", e)
+        logger.warning("Semantic chunking failed (%s: %s). Using fallback recursive.", type(e).__name__, e)
 
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
