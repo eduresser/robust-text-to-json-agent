@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     SQLITE_DB_PATH: str = ".cache/checkpoints.db"
 
-    MAX_ITERATIONS_PER_CHUNK: int = 50
+    MAX_ITERATIONS_PER_CHUNK: int = 20
     MAX_CHUNK_RETRIES: int = 3
 
     TRUNCATE_SKELETON_LIMIT: int = 6000
